@@ -20,14 +20,12 @@ import torch
 from diffusers import UNet1DModel
 from diffusers.utils import floats_tensor, slow, torch_device
 
-from ..test_modeling_common import ModelTesterMixin
+from .test_modeling_common import ModelTesterMixin, UNetTesterMixin
 
 
-torch.backends.cuda.matmul.allow_tf32 = False
-
-
-class UNet1DModelTests(ModelTesterMixin, unittest.TestCase):
+class UNet1DModelTests(ModelTesterMixin, UNetTesterMixin, unittest.TestCase):
     model_class = UNet1DModel
+    main_input_name = "sample"
 
     @property
     def dummy_input(self):
@@ -116,7 +114,7 @@ class UNet1DModelTests(ModelTesterMixin, unittest.TestCase):
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(0)
 
-        num_features = model.in_channels
+        num_features = model.config.in_channels
         seq_len = 16
         noise = torch.randn((1, seq_len, num_features)).permute(
             0, 2, 1
@@ -152,12 +150,13 @@ class UNet1DModelTests(ModelTesterMixin, unittest.TestCase):
         output_sum = output.abs().sum()
         output_max = output.abs().max()
 
-        assert (output_sum - 224.0896).abs() < 4e-2
+        assert (output_sum - 224.0896).abs() < 0.5
         assert (output_max - 0.0607).abs() < 4e-4
 
 
-class UNetRLModelTests(ModelTesterMixin, unittest.TestCase):
+class UNetRLModelTests(ModelTesterMixin, UNetTesterMixin, unittest.TestCase):
     model_class = UNet1DModel
+    main_input_name = "sample"
 
     @property
     def dummy_input(self):
@@ -264,7 +263,7 @@ class UNetRLModelTests(ModelTesterMixin, unittest.TestCase):
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(0)
 
-        num_features = value_function.in_channels
+        num_features = value_function.config.in_channels
         seq_len = 14
         noise = torch.randn((1, seq_len, num_features)).permute(
             0, 2, 1

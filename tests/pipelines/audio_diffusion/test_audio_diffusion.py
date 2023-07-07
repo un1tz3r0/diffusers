@@ -30,10 +30,10 @@ from diffusers import (
     UNet2DModel,
 )
 from diffusers.utils import slow, torch_device
-from diffusers.utils.testing_utils import require_torch_gpu
+from diffusers.utils.testing_utils import enable_full_determinism, require_torch_gpu
 
 
-torch.backends.cuda.matmul.allow_tf32 = False
+enable_full_determinism()
 
 
 class PipelineFastTests(unittest.TestCase):
@@ -99,7 +99,10 @@ class PipelineFastTests(unittest.TestCase):
     @slow
     def test_audio_diffusion(self):
         device = "cpu"  # ensure determinism for the device-dependent torch.Generator
-        mel = Mel()
+        mel = Mel(
+            x_res=self.dummy_unet.config.sample_size[1],
+            y_res=self.dummy_unet.config.sample_size[0],
+        )
 
         scheduler = DDPMScheduler()
         pipe = AudioDiffusionPipeline(vqvae=None, unet=self.dummy_unet, mel=mel, scheduler=scheduler)
@@ -115,14 +118,22 @@ class PipelineFastTests(unittest.TestCase):
         output = pipe(generator=generator, steps=4, return_dict=False)
         image_from_tuple = output[0][0]
 
-        assert audio.shape == (1, (self.dummy_unet.sample_size[1] - 1) * mel.hop_length)
-        assert image.height == self.dummy_unet.sample_size[0] and image.width == self.dummy_unet.sample_size[1]
+        assert audio.shape == (1, (self.dummy_unet.config.sample_size[1] - 1) * mel.hop_length)
+        assert (
+            image.height == self.dummy_unet.config.sample_size[0]
+            and image.width == self.dummy_unet.config.sample_size[1]
+        )
         image_slice = np.frombuffer(image.tobytes(), dtype="uint8")[:10]
         image_from_tuple_slice = np.frombuffer(image_from_tuple.tobytes(), dtype="uint8")[:10]
         expected_slice = np.array([69, 255, 255, 255, 0, 0, 77, 181, 12, 127])
 
         assert np.abs(image_slice.flatten() - expected_slice).max() == 0
         assert np.abs(image_from_tuple_slice.flatten() - expected_slice).max() == 0
+
+        mel = Mel(
+            x_res=self.dummy_vqvae_and_unet[0].config.sample_size[1],
+            y_res=self.dummy_vqvae_and_unet[0].config.sample_size[0],
+        )
 
         scheduler = DDIMScheduler()
         dummy_vqvae_and_unet = self.dummy_vqvae_and_unet
@@ -133,14 +144,14 @@ class PipelineFastTests(unittest.TestCase):
         pipe.set_progress_bar_config(disable=None)
 
         np.random.seed(0)
-        raw_audio = np.random.uniform(-1, 1, ((dummy_vqvae_and_unet[0].sample_size[1] - 1) * mel.hop_length,))
+        raw_audio = np.random.uniform(-1, 1, ((dummy_vqvae_and_unet[0].config.sample_size[1] - 1) * mel.hop_length,))
         generator = torch.Generator(device=device).manual_seed(42)
         output = pipe(raw_audio=raw_audio, generator=generator, start_step=5, steps=10)
         image = output.images[0]
 
         assert (
-            image.height == self.dummy_vqvae_and_unet[0].sample_size[0]
-            and image.width == self.dummy_vqvae_and_unet[0].sample_size[1]
+            image.height == self.dummy_vqvae_and_unet[0].config.sample_size[0]
+            and image.width == self.dummy_vqvae_and_unet[0].config.sample_size[1]
         )
         image_slice = np.frombuffer(image.tobytes(), dtype="uint8")[:10]
         expected_slice = np.array([120, 117, 110, 109, 138, 167, 138, 148, 132, 121])
@@ -151,13 +162,15 @@ class PipelineFastTests(unittest.TestCase):
         pipe = AudioDiffusionPipeline(
             vqvae=self.dummy_vqvae_and_unet[0], unet=dummy_unet_condition, mel=mel, scheduler=scheduler
         )
+        pipe = pipe.to(device)
+        pipe.set_progress_bar_config(disable=None)
 
         np.random.seed(0)
         encoding = torch.rand((1, 1, 10))
         output = pipe(generator=generator, encoding=encoding)
         image = output.images[0]
         image_slice = np.frombuffer(image.tobytes(), dtype="uint8")[:10]
-        expected_slice = np.array([120, 139, 147, 123, 124, 96, 115, 121, 126, 144])
+        expected_slice = np.array([107, 103, 120, 127, 142, 122, 113, 122, 97, 111])
 
         assert np.abs(image_slice.flatten() - expected_slice).max() == 0
 
@@ -183,8 +196,8 @@ class PipelineIntegrationTests(unittest.TestCase):
         audio = output.audios[0]
         image = output.images[0]
 
-        assert audio.shape == (1, (pipe.unet.sample_size[1] - 1) * pipe.mel.hop_length)
-        assert image.height == pipe.unet.sample_size[0] and image.width == pipe.unet.sample_size[1]
+        assert audio.shape == (1, (pipe.unet.config.sample_size[1] - 1) * pipe.mel.hop_length)
+        assert image.height == pipe.unet.config.sample_size[0] and image.width == pipe.unet.config.sample_size[1]
         image_slice = np.frombuffer(image.tobytes(), dtype="uint8")[:10]
         expected_slice = np.array([151, 167, 154, 144, 122, 134, 121, 105, 70, 26])
 

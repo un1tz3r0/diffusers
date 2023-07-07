@@ -1,3 +1,18 @@
+# Copyright 2023 The HuggingFace Team. All rights reserved.
+# `TemporalConvLayer` Copyright 2023 Alibaba DAMO-VILAB, The ModelScope Team and The HuggingFace Team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import partial
 from typing import Optional
 
@@ -5,18 +20,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .activations import get_activation
 from .attention import AdaGroupNorm
+from .attention_processor import SpatialNorm
 
 
 class Upsample1D(nn.Module):
-    """
-    An upsampling layer with an optional convolution.
+    """A 1D upsampling layer with an optional convolution.
 
     Parameters:
-            channels: channels in the inputs and outputs.
-            use_conv: a bool determining if a convolution is applied.
-            use_conv_transpose:
-            out_channels:
+        channels (`int`):
+            number of channels in the inputs and outputs.
+        use_conv (`bool`, default `False`):
+            option to use a convolution.
+        use_conv_transpose (`bool`, default `False`):
+            option to use a convolution transpose.
+        out_channels (`int`, optional):
+            number of output channels. Defaults to `channels`.
     """
 
     def __init__(self, channels, use_conv=False, use_conv_transpose=False, out_channels=None, name="conv"):
@@ -33,28 +53,31 @@ class Upsample1D(nn.Module):
         elif use_conv:
             self.conv = nn.Conv1d(self.channels, self.out_channels, 3, padding=1)
 
-    def forward(self, x):
-        assert x.shape[1] == self.channels
+    def forward(self, inputs):
+        assert inputs.shape[1] == self.channels
         if self.use_conv_transpose:
-            return self.conv(x)
+            return self.conv(inputs)
 
-        x = F.interpolate(x, scale_factor=2.0, mode="nearest")
+        outputs = F.interpolate(inputs, scale_factor=2.0, mode="nearest")
 
         if self.use_conv:
-            x = self.conv(x)
+            outputs = self.conv(outputs)
 
-        return x
+        return outputs
 
 
 class Downsample1D(nn.Module):
-    """
-    A downsampling layer with an optional convolution.
+    """A 1D downsampling layer with an optional convolution.
 
     Parameters:
-        channels: channels in the inputs and outputs.
-        use_conv: a bool determining if a convolution is applied.
-        out_channels:
-        padding:
+        channels (`int`):
+            number of channels in the inputs and outputs.
+        use_conv (`bool`, default `False`):
+            option to use a convolution.
+        out_channels (`int`, optional):
+            number of output channels. Defaults to `channels`.
+        padding (`int`, default `1`):
+            padding for the convolution.
     """
 
     def __init__(self, channels, use_conv=False, out_channels=None, padding=1, name="conv"):
@@ -72,20 +95,23 @@ class Downsample1D(nn.Module):
             assert self.channels == self.out_channels
             self.conv = nn.AvgPool1d(kernel_size=stride, stride=stride)
 
-    def forward(self, x):
-        assert x.shape[1] == self.channels
-        return self.conv(x)
+    def forward(self, inputs):
+        assert inputs.shape[1] == self.channels
+        return self.conv(inputs)
 
 
 class Upsample2D(nn.Module):
-    """
-    An upsampling layer with an optional convolution.
+    """A 2D upsampling layer with an optional convolution.
 
     Parameters:
-        channels: channels in the inputs and outputs.
-        use_conv: a bool determining if a convolution is applied.
-        use_conv_transpose:
-        out_channels:
+        channels (`int`):
+            number of channels in the inputs and outputs.
+        use_conv (`bool`, default `False`):
+            option to use a convolution.
+        use_conv_transpose (`bool`, default `False`):
+            option to use a convolution transpose.
+        out_channels (`int`, optional):
+            number of output channels. Defaults to `channels`.
     """
 
     def __init__(self, channels, use_conv=False, use_conv_transpose=False, out_channels=None, name="conv"):
@@ -147,14 +173,17 @@ class Upsample2D(nn.Module):
 
 
 class Downsample2D(nn.Module):
-    """
-    A downsampling layer with an optional convolution.
+    """A 2D downsampling layer with an optional convolution.
 
     Parameters:
-        channels: channels in the inputs and outputs.
-        use_conv: a bool determining if a convolution is applied.
-        out_channels:
-        padding:
+        channels (`int`):
+            number of channels in the inputs and outputs.
+        use_conv (`bool`, default `False`):
+            option to use a convolution.
+        out_channels (`int`, optional):
+            number of output channels. Defaults to `channels`.
+        padding (`int`, default `1`):
+            padding for the convolution.
     """
 
     def __init__(self, channels, use_conv=False, out_channels=None, padding=1, name="conv"):
@@ -194,6 +223,19 @@ class Downsample2D(nn.Module):
 
 
 class FirUpsample2D(nn.Module):
+    """A 2D FIR upsampling layer with an optional convolution.
+
+    Parameters:
+        channels (`int`):
+            number of channels in the inputs and outputs.
+        use_conv (`bool`, default `False`):
+            option to use a convolution.
+        out_channels (`int`, optional):
+            number of output channels. Defaults to `channels`.
+        fir_kernel (`tuple`, default `(1, 3, 3, 1)`):
+            kernel for the FIR filter.
+    """
+
     def __init__(self, channels=None, out_channels=None, use_conv=False, fir_kernel=(1, 3, 3, 1)):
         super().__init__()
         out_channels = out_channels if out_channels else channels
@@ -294,6 +336,19 @@ class FirUpsample2D(nn.Module):
 
 
 class FirDownsample2D(nn.Module):
+    """A 2D FIR downsampling layer with an optional convolution.
+
+    Parameters:
+        channels (`int`):
+            number of channels in the inputs and outputs.
+        use_conv (`bool`, default `False`):
+            option to use a convolution.
+        out_channels (`int`, optional):
+            number of output channels. Defaults to `channels`.
+        fir_kernel (`tuple`, default `(1, 3, 3, 1)`):
+            kernel for the FIR filter.
+    """
+
     def __init__(self, channels=None, out_channels=None, use_conv=False, fir_kernel=(1, 3, 3, 1)):
         super().__init__()
         out_channels = out_channels if out_channels else channels
@@ -376,12 +431,13 @@ class KDownsample2D(nn.Module):
         self.pad = kernel_1d.shape[1] // 2 - 1
         self.register_buffer("kernel", kernel_1d.T @ kernel_1d, persistent=False)
 
-    def forward(self, x):
-        x = F.pad(x, (self.pad,) * 4, self.pad_mode)
-        weight = x.new_zeros([x.shape[1], x.shape[1], self.kernel.shape[0], self.kernel.shape[1]])
-        indices = torch.arange(x.shape[1], device=x.device)
-        weight[indices, indices] = self.kernel.to(weight)
-        return F.conv2d(x, weight, stride=2)
+    def forward(self, inputs):
+        inputs = F.pad(inputs, (self.pad,) * 4, self.pad_mode)
+        weight = inputs.new_zeros([inputs.shape[1], inputs.shape[1], self.kernel.shape[0], self.kernel.shape[1]])
+        indices = torch.arange(inputs.shape[1], device=inputs.device)
+        kernel = self.kernel.to(weight)[None, :].expand(inputs.shape[1], -1, -1)
+        weight[indices, indices] = kernel
+        return F.conv2d(inputs, weight, stride=2)
 
 
 class KUpsample2D(nn.Module):
@@ -392,12 +448,13 @@ class KUpsample2D(nn.Module):
         self.pad = kernel_1d.shape[1] // 2 - 1
         self.register_buffer("kernel", kernel_1d.T @ kernel_1d, persistent=False)
 
-    def forward(self, x):
-        x = F.pad(x, ((self.pad + 1) // 2,) * 4, self.pad_mode)
-        weight = x.new_zeros([x.shape[1], x.shape[1], self.kernel.shape[0], self.kernel.shape[1]])
-        indices = torch.arange(x.shape[1], device=x.device)
-        weight[indices, indices] = self.kernel.to(weight)
-        return F.conv_transpose2d(x, weight, stride=2, padding=self.pad * 2 + 1)
+    def forward(self, inputs):
+        inputs = F.pad(inputs, ((self.pad + 1) // 2,) * 4, self.pad_mode)
+        weight = inputs.new_zeros([inputs.shape[1], inputs.shape[1], self.kernel.shape[0], self.kernel.shape[1]])
+        indices = torch.arange(inputs.shape[1], device=inputs.device)
+        kernel = self.kernel.to(weight)[None, :].expand(inputs.shape[1], -1, -1)
+        weight[indices, indices] = kernel
+        return F.conv_transpose2d(inputs, weight, stride=2, padding=self.pad * 2 + 1)
 
 
 class ResnetBlock2D(nn.Module):
@@ -418,7 +475,7 @@ class ResnetBlock2D(nn.Module):
         time_embedding_norm (`str`, *optional*, default to `"default"` ): Time scale shift config.
             By default, apply timestep embedding conditioning with a simple shift mechanism. Choose "scale_shift" or
             "ada_group" for a stronger conditioning with scale and shift.
-        kernal (`torch.FloatTensor`, optional, default to None): FIR filter, see
+        kernel (`torch.FloatTensor`, optional, default to None): FIR filter, see
             [`~models.resnet.FirUpsample2D`] and [`~models.resnet.FirDownsample2D`].
         output_scale_factor (`float`, *optional*, default to be `1.0`): the scale factor to use for the output.
         use_in_shortcut (`bool`, *optional*, default to `True`):
@@ -444,7 +501,8 @@ class ResnetBlock2D(nn.Module):
         pre_norm=True,
         eps=1e-6,
         non_linearity="swish",
-        time_embedding_norm="default",  # default, scale_shift, ada_group
+        skip_time_act=False,
+        time_embedding_norm="default",  # default, scale_shift, ada_group, spatial
         kernel=None,
         output_scale_factor=1.0,
         use_in_shortcut=None,
@@ -464,12 +522,15 @@ class ResnetBlock2D(nn.Module):
         self.down = down
         self.output_scale_factor = output_scale_factor
         self.time_embedding_norm = time_embedding_norm
+        self.skip_time_act = skip_time_act
 
         if groups_out is None:
             groups_out = groups
 
         if self.time_embedding_norm == "ada_group":
             self.norm1 = AdaGroupNorm(temb_channels, in_channels, groups, eps=eps)
+        elif self.time_embedding_norm == "spatial":
+            self.norm1 = SpatialNorm(in_channels, temb_channels)
         else:
             self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
 
@@ -480,7 +541,7 @@ class ResnetBlock2D(nn.Module):
                 self.time_emb_proj = torch.nn.Linear(temb_channels, out_channels)
             elif self.time_embedding_norm == "scale_shift":
                 self.time_emb_proj = torch.nn.Linear(temb_channels, 2 * out_channels)
-            elif self.time_embedding_norm == "ada_group":
+            elif self.time_embedding_norm == "ada_group" or self.time_embedding_norm == "spatial":
                 self.time_emb_proj = None
             else:
                 raise ValueError(f"unknown time_embedding_norm : {self.time_embedding_norm} ")
@@ -489,6 +550,8 @@ class ResnetBlock2D(nn.Module):
 
         if self.time_embedding_norm == "ada_group":
             self.norm2 = AdaGroupNorm(temb_channels, out_channels, groups_out, eps=eps)
+        elif self.time_embedding_norm == "spatial":
+            self.norm2 = SpatialNorm(out_channels, temb_channels)
         else:
             self.norm2 = torch.nn.GroupNorm(num_groups=groups_out, num_channels=out_channels, eps=eps, affine=True)
 
@@ -496,14 +559,7 @@ class ResnetBlock2D(nn.Module):
         conv_2d_out_channels = conv_2d_out_channels or out_channels
         self.conv2 = torch.nn.Conv2d(out_channels, conv_2d_out_channels, kernel_size=3, stride=1, padding=1)
 
-        if non_linearity == "swish":
-            self.nonlinearity = lambda x: F.silu(x)
-        elif non_linearity == "mish":
-            self.nonlinearity = nn.Mish()
-        elif non_linearity == "silu":
-            self.nonlinearity = nn.SiLU()
-        elif non_linearity == "gelu":
-            self.nonlinearity = nn.GELU()
+        self.nonlinearity = get_activation(non_linearity)
 
         self.upsample = self.downsample = None
         if self.up:
@@ -534,7 +590,7 @@ class ResnetBlock2D(nn.Module):
     def forward(self, input_tensor, temb):
         hidden_states = input_tensor
 
-        if self.time_embedding_norm == "ada_group":
+        if self.time_embedding_norm == "ada_group" or self.time_embedding_norm == "spatial":
             hidden_states = self.norm1(hidden_states, temb)
         else:
             hidden_states = self.norm1(hidden_states)
@@ -555,12 +611,14 @@ class ResnetBlock2D(nn.Module):
         hidden_states = self.conv1(hidden_states)
 
         if self.time_emb_proj is not None:
-            temb = self.time_emb_proj(self.nonlinearity(temb))[:, :, None, None]
+            if not self.skip_time_act:
+                temb = self.nonlinearity(temb)
+            temb = self.time_emb_proj(temb)[:, :, None, None]
 
         if temb is not None and self.time_embedding_norm == "default":
             hidden_states = hidden_states + temb
 
-        if self.time_embedding_norm == "ada_group":
+        if self.time_embedding_norm == "ada_group" or self.time_embedding_norm == "spatial":
             hidden_states = self.norm2(hidden_states, temb)
         else:
             hidden_states = self.norm2(hidden_states)
@@ -580,11 +638,6 @@ class ResnetBlock2D(nn.Module):
         output_tensor = (input_tensor + hidden_states) / self.output_scale_factor
 
         return output_tensor
-
-
-class Mish(torch.nn.Module):
-    def forward(self, hidden_states):
-        return hidden_states * torch.tanh(torch.nn.functional.softplus(hidden_states))
 
 
 # unet_rl.py
@@ -611,13 +664,13 @@ class Conv1dBlock(nn.Module):
         self.group_norm = nn.GroupNorm(n_groups, out_channels)
         self.mish = nn.Mish()
 
-    def forward(self, x):
-        x = self.conv1d(x)
-        x = rearrange_dims(x)
-        x = self.group_norm(x)
-        x = rearrange_dims(x)
-        x = self.mish(x)
-        return x
+    def forward(self, inputs):
+        intermediate_repr = self.conv1d(inputs)
+        intermediate_repr = rearrange_dims(intermediate_repr)
+        intermediate_repr = self.group_norm(intermediate_repr)
+        intermediate_repr = rearrange_dims(intermediate_repr)
+        output = self.mish(intermediate_repr)
+        return output
 
 
 # unet_rl.py
@@ -634,10 +687,10 @@ class ResidualTemporalBlock1D(nn.Module):
             nn.Conv1d(inp_channels, out_channels, 1) if inp_channels != out_channels else nn.Identity()
         )
 
-    def forward(self, x, t):
+    def forward(self, inputs, t):
         """
         Args:
-            x : [ batch_size x inp_channels x horizon ]
+            inputs : [ batch_size x inp_channels x horizon ]
             t : [ batch_size x embed_dim ]
 
         returns:
@@ -645,9 +698,9 @@ class ResidualTemporalBlock1D(nn.Module):
         """
         t = self.time_emb_act(t)
         t = self.time_emb(t)
-        out = self.conv_in(x) + rearrange_dims(t)
+        out = self.conv_in(inputs) + rearrange_dims(t)
         out = self.conv_out(out)
-        return out + self.residual_conv(x)
+        return out + self.residual_conv(inputs)
 
 
 def upsample_2d(hidden_states, kernel=None, factor=2, gain=1):
@@ -764,3 +817,61 @@ def upfirdn2d_native(tensor, kernel, up=1, down=1, pad=(0, 0)):
     out_w = (in_w * up_x + pad_x0 + pad_x1 - kernel_w) // down_x + 1
 
     return out.view(-1, channel, out_h, out_w)
+
+
+class TemporalConvLayer(nn.Module):
+    """
+    Temporal convolutional layer that can be used for video (sequence of images) input Code mostly copied from:
+    https://github.com/modelscope/modelscope/blob/1509fdb973e5871f37148a4b5e5964cafd43e64d/modelscope/models/multi_modal/video_synthesis/unet_sd.py#L1016
+    """
+
+    def __init__(self, in_dim, out_dim=None, dropout=0.0):
+        super().__init__()
+        out_dim = out_dim or in_dim
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+
+        # conv layers
+        self.conv1 = nn.Sequential(
+            nn.GroupNorm(32, in_dim), nn.SiLU(), nn.Conv3d(in_dim, out_dim, (3, 1, 1), padding=(1, 0, 0))
+        )
+        self.conv2 = nn.Sequential(
+            nn.GroupNorm(32, out_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Conv3d(out_dim, in_dim, (3, 1, 1), padding=(1, 0, 0)),
+        )
+        self.conv3 = nn.Sequential(
+            nn.GroupNorm(32, out_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Conv3d(out_dim, in_dim, (3, 1, 1), padding=(1, 0, 0)),
+        )
+        self.conv4 = nn.Sequential(
+            nn.GroupNorm(32, out_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Conv3d(out_dim, in_dim, (3, 1, 1), padding=(1, 0, 0)),
+        )
+
+        # zero out the last layer params,so the conv block is identity
+        nn.init.zeros_(self.conv4[-1].weight)
+        nn.init.zeros_(self.conv4[-1].bias)
+
+    def forward(self, hidden_states, num_frames=1):
+        hidden_states = (
+            hidden_states[None, :].reshape((-1, num_frames) + hidden_states.shape[1:]).permute(0, 2, 1, 3, 4)
+        )
+
+        identity = hidden_states
+        hidden_states = self.conv1(hidden_states)
+        hidden_states = self.conv2(hidden_states)
+        hidden_states = self.conv3(hidden_states)
+        hidden_states = self.conv4(hidden_states)
+
+        hidden_states = identity + hidden_states
+
+        hidden_states = hidden_states.permute(0, 2, 1, 3, 4).reshape(
+            (hidden_states.shape[0] * hidden_states.shape[2], -1) + hidden_states.shape[3:]
+        )
+        return hidden_states
